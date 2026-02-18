@@ -1,0 +1,24 @@
+{
+  "name": "tabby-ai",
+  "version": "1.0.0",
+  "description": "AI assistant for Tabby terminal — trigger with Ctrl+Space",
+  "keywords": [
+    "tabby-builtin-plugin"
+  ],
+  "main": "dist/index.js",
+  "typings": "typings/index.d.ts",
+  "scripts": {
+    "build": "webpack --progress --color --display-modules",
+    "watch": "webpack --progress --color --watch"
+  },
+  "files": [
+    "dist",
+    "typings"
+  ],
+  "author": "Tera",
+  "license": "MIT",
+  "peerDependencies": {
+    "tabby-core": "*",
+    "tabby-terminal": "*"
+  }
+}
