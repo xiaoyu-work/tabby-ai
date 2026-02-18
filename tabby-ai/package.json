@@ -19,6 +19,7 @@
   "license": "MIT",
   "peerDependencies": {
     "tabby-core": "*",
-    "tabby-terminal": "*"
+    "tabby-terminal": "*",
+    "tabby-settings": "*"
   }
 }

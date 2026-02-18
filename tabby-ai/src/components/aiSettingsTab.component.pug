@@ -1,0 +1,70 @@
+h3 AI Assistant
+
+.alert.alert-info
+    | Configure your LLM provider. Any OpenAI-compatible API endpoint is supported.
+    | Press #[strong Ctrl+Space] in a terminal to open the AI panel.
+
+.form-line
+    .header
+        .title Provider
+        .description Select a preset or choose "Custom" for any OpenAI-compatible endpoint.
+    select.form-control(
+        [(ngModel)]='config.store.ai.provider',
+        (ngModelChange)='onProviderChange(); config.save()',
+    )
+        option(value='openai') OpenAI
+        option(value='gemini') Google Gemini
+        option(value='ollama') Ollama (local)
+        option(value='deepseek') DeepSeek
+        option(value='azure') Azure OpenAI
+        option(value='custom') Custom
+
+.form-line
+    .header
+        .title API Base URL
+        .description(
+            *ngIf='config.store.ai.provider !== "custom"'
+        ) Leave empty to use the default URL for {{config.store.ai.provider}}. Override if needed.
+        .description(
+            *ngIf='config.store.ai.provider === "custom"'
+        ) The OpenAI-compatible base URL (e.g. http://localhost:4000/v1/ for LiteLLM Proxy).
+    input.form-control(
+        type='text',
+        [placeholder]='getBaseUrlPlaceholder()',
+        [(ngModel)]='config.store.ai.baseUrl',
+        (ngModelChange)='config.save()',
+    )
+
+.form-line(*ngIf='config.store.ai.provider !== "ollama"')
+    .header
+        .title API Key
+        .description Your API key for the selected provider.
+    input.form-control(
+        type='password',
+        placeholder='sk-...',
+        [(ngModel)]='config.store.ai.apiKey',
+        (ngModelChange)='config.save()',
+    )
+
+.form-line
+    .header
+        .title Model
+        .description Model name to use for completions.
+    input.form-control(
+        type='text',
+        [placeholder]='getModelPlaceholder()',
+        [(ngModel)]='config.store.ai.model',
+        (ngModelChange)='config.save()',
+    )
+
+.form-line
+    .header
+        .title Context Lines
+        .description Max lines of terminal output to include as AI context.
+    input.form-control(
+        type='number',
+        min='10',
+        max='500',
+        [(ngModel)]='config.store.ai.maxContextLines',
+        (ngModelChange)='config.save()',
+    )
