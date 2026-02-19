@@ -8,6 +8,7 @@
  */
 
 import colors from 'ansi-colors'
+import { ConfigService } from 'tabby-core'
 import { SessionMiddleware } from 'tabby-terminal'
 import { AIService, ChatMessage } from './ai.service'
 import { ContextCollector } from './contextCollector'
@@ -44,20 +45,26 @@ export class AIMiddleware extends SessionMiddleware {
     constructor (
         private ai: AIService,
         private collector: ContextCollector,
+        private config: ConfigService,
     ) {
         super()
     }
 
     feedFromSession (data: Buffer): void {
-        if (!this.bannerShown) {
-            this.bannerShown = true
-            this.outputToTerminal.next(Buffer.from(
-                '\r\n' + colors.cyan('  [AI Ready] ') + colors.gray('Type "@ " + prompt + Enter to chat with AI') + '\r\n',
-            ))
+        try {
+            if (!this.bannerShown) {
+                this.bannerShown = true
+                this.outputToTerminal.next(Buffer.from(
+                    '\r\n' + colors.cyan('  [AI Ready] ') + colors.gray('Type "@ " + prompt + Enter to chat with AI') + '\r\n',
+                ))
+            }
+            // Any shell output means cursor is at a prompt/new line
+            this.atLineStart = true
+            this.outputToTerminal.next(data)
+        } catch (e) {
+            console.error('[tabby-ai] feedFromSession error:', e)
+            this.outputToTerminal.next(data)
         }
-        // Any shell output means cursor is at a prompt/new line
-        this.atLineStart = true
-        this.outputToTerminal.next(data)
     }
 
     feedFromTerminal (data: Buffer): void {
@@ -315,6 +322,34 @@ export class AIMiddleware extends SessionMiddleware {
         this.outputToTerminal.next(Buffer.from(
             colors.gray(line) + '\r\n',
         ))
+
+        // Persist to historical per-provider stats
+        this.persistUsage(usage)
+    }
+
+    /**
+     * Persist token usage to config for historical per-provider tracking.
+     * Survives app restarts — stored in config.yaml.
+     *
+     * IMPORTANT: ConfigProxy only creates setter descriptors for keys that exist
+     * in defaults. We must SET the entire stats object through the proxy setter
+     * (not mutate an existing reference) to ensure it lands in the real store.
+     */
+    private persistUsage (usage: TokensSummary): void {
+        const provider = this.config.store.ai?.provider || 'custom'
+        const current = this.config.store.ai.tokenUsage?.[provider]
+
+        // Build a new plain object — avoids proxy mutation issues
+        const updated = {
+            promptTokens: (current?.promptTokens || 0) + usage.promptTokens,
+            completionTokens: (current?.completionTokens || 0) + usage.completionTokens,
+            totalTokens: (current?.totalTokens || 0) + usage.totalTokens,
+            requestCount: (current?.requestCount || 0) + 1,
+        }
+
+        // Assign through proxy setter so it reaches real storage
+        this.config.store.ai.tokenUsage[provider] = updated
+        this.config.save()
     }
 
     private buildSystemPrompt (): string {

@@ -98,3 +98,45 @@ h3 AI Assistant
         [(ngModel)]='config.store.ai.maxContextLines',
         (ngModelChange)='config.save()',
     )
+
+hr
+
+h4 Token Usage History
+
+.text-muted.mb-3(*ngIf='getUsageProviders().length === 0')
+    | No usage data yet. Start using AI to see token statistics here.
+
+table.table.table-sm(*ngIf='getUsageProviders().length > 0')
+    thead
+        tr
+            th Provider
+            th Requests
+            th Input Tokens
+            th Output Tokens
+            th Total Tokens
+            th
+    tbody
+        tr(*ngFor='let p of getUsageProviders()')
+            td {{ getProviderLabel(p) }}
+            td {{ formatNumber(config.store.ai.tokenUsage[p].requestCount) }}
+            td {{ formatNumber(config.store.ai.tokenUsage[p].promptTokens) }}
+            td {{ formatNumber(config.store.ai.tokenUsage[p].completionTokens) }}
+            td {{ formatNumber(config.store.ai.tokenUsage[p].totalTokens) }}
+            td
+                button.btn.btn-sm.btn-outline-danger(
+                    (click)='clearUsage(p)',
+                    title='Clear usage for this provider',
+                )
+                    i.fas.fa-trash
+    tfoot(*ngIf='getUsageProviders().length > 1')
+        tr.fw-bold
+            td Total
+            td {{ formatNumber(getTotalRequests()) }}
+            td {{ formatNumber(getTotalPromptTokens()) }}
+            td {{ formatNumber(getTotalCompletionTokens()) }}
+            td {{ formatNumber(getTotalTokens()) }}
+            td
+                button.btn.btn-sm.btn-outline-danger(
+                    (click)='clearAllUsage()',
+                )
+                    | Clear All

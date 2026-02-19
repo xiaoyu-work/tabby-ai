@@ -38,6 +38,21 @@ export class AIConfigProvider extends ConfigProvider {
 
             /** Max lines of terminal output to include as context */
             maxContextLines: 100,
+
+            /**
+             * Historical token usage per provider.
+             * Persisted across app restarts.
+             * Each key must be pre-declared so ConfigProxy creates property descriptors.
+             * Value is null (no data) or { promptTokens, completionTokens, totalTokens, requestCount }.
+             */
+            tokenUsage: {
+                openai: null as any,
+                gemini: null as any,
+                ollama: null as any,
+                deepseek: null as any,
+                azure: null as any,
+                custom: null as any,
+            },
         },
     }
 
