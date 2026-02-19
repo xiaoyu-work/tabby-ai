@@ -13,6 +13,28 @@ if (process.platform === 'win32' || process.platform === 'linux') {
     process.env.ARCH ??= process.arch
 }
 
+if (process.platform === 'win32' && !process.env.VCToolsVersion) {
+    // VS 2026's default v180 toolset lacks Spectre-mitigated libs.
+    // Find a toolset that has them (v143's 14.44.x typically does).
+    const fs = await import('fs')
+    const vsEditions = ['Community', 'Professional', 'Enterprise']
+    for (const edition of vsEditions) {
+        const toolsBase = path.resolve('C:/Program Files/Microsoft Visual Studio/18', edition, 'VC/Tools/MSVC')
+        try {
+            const versions = fs.readdirSync(toolsBase)
+                .filter(v => fs.existsSync(path.join(toolsBase, v, 'lib/spectre/x64')))
+                .sort()
+            if (versions.length > 0) {
+                process.env.VCToolsVersion = versions[versions.length - 1]
+                console.info('Using VCToolsVersion', process.env.VCToolsVersion, '(has Spectre libs)')
+                break
+            }
+        } catch {
+            // This VS edition not installed, try next
+        }
+    }
+}
+
 let lifecycles = []
 for (let dir of ['app', 'tabby-core', 'tabby-local', 'tabby-ssh', 'tabby-terminal']) {
     const build = rebuild({

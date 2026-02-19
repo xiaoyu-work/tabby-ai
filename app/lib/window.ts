@@ -15,7 +15,11 @@ import { parseTabbyURL, isTabbyURL } from './urlHandler'
 
 let DwmEnableBlurBehindWindow: any = null
 if (process.platform === 'win32') {
-    DwmEnableBlurBehindWindow = require('@tabby-gang/windows-blurbehind').DwmEnableBlurBehindWindow
+    try {
+        DwmEnableBlurBehindWindow = require('@tabby-gang/windows-blurbehind').DwmEnableBlurBehindWindow
+    } catch {
+        // Optional dependency - vibrancy on older Windows versions won't work
+    }
 }
 
 export interface WindowOptions {

@@ -30,6 +30,12 @@ export class AIConfigProvider extends ConfigProvider {
             /** Model name */
             model: 'gemini-2.0-flash',
 
+            /** Azure deployment name (only used when provider is 'azure') */
+            deployment: '',
+
+            /** Azure API version (only used when provider is 'azure') */
+            apiVersion: '2024-12-01-preview',
+
             /** Max lines of terminal output to include as context */
             maxContextLines: 100,
         },

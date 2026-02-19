@@ -17,6 +17,9 @@
   ],
   "author": "Tera",
   "license": "MIT",
+  "dependencies": {
+    "ansi-colors": "^4.1.1"
+  },
   "peerDependencies": {
     "tabby-core": "*",
     "tabby-terminal": "*",

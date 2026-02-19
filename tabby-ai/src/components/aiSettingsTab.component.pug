@@ -2,7 +2,7 @@ h3 AI Assistant
 
 .alert.alert-info
     | Configure your LLM provider. Any OpenAI-compatible API endpoint is supported.
-    | Press #[strong Ctrl+Space] in a terminal to open the AI panel.
+    | Type #[strong @ ] followed by your prompt in a terminal to chat with AI.
 
 .form-line
     .header
@@ -21,17 +21,36 @@ h3 AI Assistant
 
 .form-line
     .header
-        .title API Base URL
+        .title(
+            *ngIf='config.store.ai.provider === "azure"'
+        ) Azure Endpoint
+        .title(
+            *ngIf='config.store.ai.provider !== "azure"'
+        ) API Base URL
         .description(
-            *ngIf='config.store.ai.provider !== "custom"'
-        ) Leave empty to use the default URL for {{config.store.ai.provider}}. Override if needed.
+            *ngIf='config.store.ai.provider === "azure"'
+        ) e.g. https://xxxx.cognitiveservices.azure.com
         .description(
             *ngIf='config.store.ai.provider === "custom"'
         ) The OpenAI-compatible base URL (e.g. http://localhost:4000/v1/ for LiteLLM Proxy).
+        .description(
+            *ngIf='config.store.ai.provider !== "custom" && config.store.ai.provider !== "azure"'
+        ) Leave empty to use the default URL for the provider. Override if needed.
     input.form-control(
         type='text',
         [placeholder]='getBaseUrlPlaceholder()',
         [(ngModel)]='config.store.ai.baseUrl',
+        (ngModelChange)='config.save()',
+    )
+
+.form-line(*ngIf='config.store.ai.provider === "azure"')
+    .header
+        .title Deployment Name
+        .description Your Azure OpenAI deployment name.
+    input.form-control(
+        type='text',
+        placeholder='gpt-4.1',
+        [(ngModel)]='config.store.ai.deployment',
         (ngModelChange)='config.save()',
     )
 
@@ -46,7 +65,18 @@ h3 AI Assistant
         (ngModelChange)='config.save()',
     )
 
-.form-line
+.form-line(*ngIf='config.store.ai.provider === "azure"')
+    .header
+        .title API Version
+        .description Azure OpenAI API version.
+    input.form-control(
+        type='text',
+        placeholder='2024-12-01-preview',
+        [(ngModel)]='config.store.ai.apiVersion',
+        (ngModelChange)='config.save()',
+    )
+
+.form-line(*ngIf='config.store.ai.provider !== "azure"')
     .header
         .title Model
         .description Model name to use for completions.

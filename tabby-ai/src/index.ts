@@ -2,14 +2,13 @@
 import { NgModule } from '@angular/core'
 import { CommonModule } from '@angular/common'
 import { FormsModule } from '@angular/forms'
-import { ConfigProvider, HotkeyProvider } from 'tabby-core'
+import { ConfigProvider } from 'tabby-core'
 import { SettingsTabProvider } from 'tabby-settings'
 import { TerminalDecorator } from 'tabby-terminal'
 
 import { AIService } from './ai.service'
 import { AIDecorator } from './decorator'
 import { AIConfigProvider } from './config'
-import { AIHotkeyProvider } from './hotkeys'
 import { AISettingsTabProvider } from './settings'
 import { AISettingsTabComponent } from './components/aiSettingsTab.component'
 
@@ -21,7 +20,6 @@ import { AISettingsTabComponent } from './components/aiSettingsTab.component'
     providers: [
         { provide: TerminalDecorator, useClass: AIDecorator, multi: true },
         { provide: ConfigProvider, useClass: AIConfigProvider, multi: true },
-        { provide: HotkeyProvider, useClass: AIHotkeyProvider, multi: true },
         { provide: SettingsTabProvider, useClass: AISettingsTabProvider, multi: true },
         AIService,
     ],

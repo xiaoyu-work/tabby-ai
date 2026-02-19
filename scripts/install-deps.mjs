@@ -9,8 +9,7 @@ sh.exec(`yarn patch-package`, { fatal: true })
 log.info('deps', 'app')
 
 sh.cd('app')
-sh.exec(`yarn install --force --network-timeout 1000000`, { fatal: true })
-// Some native packages might fail to build before patch-package gets a chance to run via postinstall
+sh.exec(`yarn install --force --ignore-scripts --network-timeout 1000000`, { fatal: true })
 sh.exec(`yarn postinstall`, { fatal: false })
 sh.cd('..')
 
