@@ -1,14 +1,6 @@
 import { Component, HostBinding } from '@angular/core'
 import { ConfigService } from 'tabby-core'
-
-const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
-    openai: { baseUrl: 'https://api.openai.com/v1/', model: 'gpt-4o-mini' },
-    gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-2.0-flash' },
-    ollama: { baseUrl: 'http://localhost:11434/v1/', model: 'llama3.2' },
-    deepseek: { baseUrl: 'https://api.deepseek.com/v1/', model: 'deepseek-chat' },
-    azure: { baseUrl: '', model: 'gpt-4o-mini' },
-    custom: { baseUrl: '', model: '' },
-}
+import { PROVIDER_PRESETS } from '../providers'
 
 @Component({
     templateUrl: './aiSettingsTab.component.pug',
@@ -22,21 +14,21 @@ export class AISettingsTabComponent {
 
     onProviderChange (): void {
         const provider = this.config.store.ai.provider
-        const defaults = PROVIDER_DEFAULTS[provider]
-        if (defaults) {
+        const preset = PROVIDER_PRESETS[provider]
+        if (preset) {
             // Clear baseUrl so the preset is used, update model to the preset default
             this.config.store.ai.baseUrl = ''
-            this.config.store.ai.model = defaults.model
+            this.config.store.ai.model = preset.defaultModel
         }
     }
 
     getBaseUrlPlaceholder (): string {
         const provider = this.config.store.ai.provider
-        return PROVIDER_DEFAULTS[provider]?.baseUrl || 'https://your-endpoint.com/v1/'
+        return PROVIDER_PRESETS[provider]?.baseUrl || 'https://your-endpoint.com/v1/'
     }
 
     getModelPlaceholder (): string {
         const provider = this.config.store.ai.provider
-        return PROVIDER_DEFAULTS[provider]?.model || 'model-name'
+        return PROVIDER_PRESETS[provider]?.defaultModel || 'model-name'
     }
 }

@@ -92,6 +92,13 @@ export class AgentLoop {
             for (let turn = 0; turn < this.maxTurns; turn++) {
                 if (this.signal.aborted) break
 
+                // Trim messages to prevent unbounded growth.
+                // Keep the system message at [0] and the last 40 messages.
+                if (this.messages.length > 50) {
+                    const systemMsg = this.messages[0]
+                    this.messages = [systemMsg, ...this.messages.slice(-40)]
+                }
+
                 // === processGeminiStreamEvents() ===
                 const toolCallRequests: ToolCallRequest[] = []
                 let assistantContent = ''
@@ -160,7 +167,7 @@ export class AgentLoop {
             }
         } catch (err: any) {
             if (err.name === 'AbortError' || this.signal.aborted) {
-                this.callbacks.onContent('\r\n(已中止)\r\n')
+                this.callbacks.onContent('\r\n(aborted)\r\n')
             } else {
                 this.callbacks.onError(err.message)
                 return
@@ -223,13 +230,58 @@ export class AgentLoop {
         return output || '(no output)'
     }
 
+    /** Sensitive dotfile basenames / directory names that must never be read. */
+    private static readonly BLOCKED_DOTFILES = new Set([
+        '.env', '.env.local', '.env.production', '.env.development', '.env.staging',
+        '.ssh', '.gnupg', '.npmrc', '.pypirc', '.netrc', '.docker',
+        '.aws', '.azure', '.gcloud',
+        '.git-credentials', '.bash_history', '.zsh_history',
+    ])
+
+    /**
+     * Returns true when the given *resolved* path should be blocked because it
+     * is a sensitive dotfile/directory or lives inside one.
+     */
+    private isSensitivePath (resolved: string): boolean {
+        const cwd = this.collector.cwd || process.cwd()
+        const relative = path.relative(cwd, resolved)
+        const segments = relative.split(path.sep)
+
+        for (const seg of segments) {
+            if (AgentLoop.BLOCKED_DOTFILES.has(seg.toLowerCase())) {
+                return true
+            }
+        }
+        return false
+    }
+
     /**
      * Mirrors gemini-cli's ReadFileToolInvocation.execute()
+     *
+     * Security: restricts reads to the current working directory and blocks
+     * known sensitive dotfiles/directories.
      */
     private async readFile (filePath: string): Promise<string> {
-        const resolved = path.isAbsolute(filePath)
-            ? filePath
-            : path.join(this.collector.cwd || process.cwd(), filePath)
+        const cwd = this.collector.cwd || process.cwd()
+        const resolved = path.resolve(cwd, filePath)
+
+        // --- Path-traversal guard: resolved path must be inside cwd ---
+        if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+            return `Error: Access denied – "${filePath}" resolves to a path outside the working directory.`
+        }
+
+        // --- Block sensitive dotfiles / directories ---
+        if (this.isSensitivePath(resolved)) {
+            return `Error: Access denied – reading sensitive dotfiles is not allowed ("${filePath}").`
+        }
+
+        // --- User confirmation (same flow as shell commands) ---
+        this.callbacks.onConfirmCommand(`Read file: ${filePath}`)
+        const approved = await this.callbacks.waitForApproval()
+        if (!approved) {
+            return 'User declined to read this file.'
+        }
+
         try {
             const content = await fs.readFile(resolved, 'utf-8')
             if (content.length > 10000) {

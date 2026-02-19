@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core'
+import { ConfigService } from 'tabby-core'
 import { TerminalDecorator, BaseTerminalTabComponent } from 'tabby-terminal'
 import { ContextCollector } from './contextCollector'
 import { AIService } from './ai.service'
@@ -8,18 +9,17 @@ import { AIMiddleware } from './aiMiddleware'
 export class AIDecorator extends TerminalDecorator {
     constructor (
         private ai: AIService,
+        private config: ConfigService,
     ) {
         super()
-        console.warn('[tabby-ai] AIDecorator created')
     }
 
     attach (tab: BaseTerminalTabComponent<any>): void {
-        console.warn('[tabby-ai] attach() called, session=', !!tab.session)
-        const collector = new ContextCollector()
+        const maxLines = this.config.store.ai?.maxContextLines ?? 100
+        const collector = new ContextCollector(maxLines)
         let currentSession: any = null
 
-        const attachToSession = (source: string) => {
-            console.warn(`[tabby-ai] attachToSession(${source}): session=`, !!tab.session, 'same=', tab.session === currentSession)
+        const attachToSession = () => {
             if (!tab.session || tab.session === currentSession) {
                 return
             }
@@ -38,20 +38,18 @@ export class AIDecorator extends TerminalDecorator {
 
             // Insert AI middleware at the front of the stack
             tab.session.middleware.unshift(new AIMiddleware(this.ai, collector))
-            console.warn('[tabby-ai] AIMiddleware unshifted into session middleware stack')
         }
 
         // Subscribe to session changes (fires when session is set/changed)
         this.subscribeUntilDetached(tab, tab.sessionChanged$.subscribe(() => {
-            attachToSession('sessionChanged$')
+            attachToSession()
         }))
 
         // Also try immediately in case session already exists
-        attachToSession('immediate')
+        attachToSession()
 
         // Fallback retry for edge cases
-        setTimeout(() => attachToSession('timeout-200'), 200)
-        setTimeout(() => attachToSession('timeout-1000'), 1000)
-        setTimeout(() => attachToSession('timeout-3000'), 3000)
+        setTimeout(() => attachToSession(), 200)
+        setTimeout(() => attachToSession(), 1000)
     }
 }

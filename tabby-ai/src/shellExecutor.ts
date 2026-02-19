@@ -15,6 +15,53 @@ export interface ShellResult {
 }
 
 /**
+ * Patterns that identify sensitive environment variable names.
+ * Any key whose UPPERCASED form contains one of these substrings is stripped.
+ */
+const SENSITIVE_SUBSTRINGS = [
+    'API_KEY',
+    'APIKEY',
+    'SECRET',
+    'TOKEN',
+    'PASSWORD',
+    'CREDENTIAL',
+    'PRIVATE_KEY',
+]
+
+/**
+ * Prefixes for cloud-provider / AI-service variables that should never leak.
+ */
+const SENSITIVE_PREFIXES = [
+    'AZURE_',
+    'AWS_',
+    'GCP_',
+    'OPENAI_',
+    'ANTHROPIC_',
+]
+
+/**
+ * Build a filtered copy of process.env that strips sensitive keys while
+ * keeping standard system variables (PATH, HOME, SHELL, TERM, LANG, etc.).
+ */
+function buildSafeEnv (): Record<string, string | undefined> {
+    const filtered: Record<string, string | undefined> = {}
+
+    for (const [key, value] of Object.entries(process.env)) {
+        const upper = key.toUpperCase()
+
+        // Check sensitive substrings
+        if (SENSITIVE_SUBSTRINGS.some(s => upper.includes(s))) continue
+
+        // Check sensitive prefixes
+        if (SENSITIVE_PREFIXES.some(p => upper.startsWith(p))) continue
+
+        filtered[key] = value
+    }
+
+    return filtered
+}
+
+/**
  * Execute a shell command, capturing output.
  * Mirrors gemini-cli's ShellExecutionService.execute().
  */
@@ -35,7 +82,7 @@ export async function executeCommand (
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: !isWindows,
             env: {
-                ...process.env,
+                ...buildSafeEnv(),
                 PAGER: 'cat',
                 GIT_PAGER: 'cat',
             },

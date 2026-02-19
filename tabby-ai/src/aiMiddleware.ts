@@ -194,6 +194,10 @@ export class AIMiddleware extends SessionMiddleware {
 
             waitForApproval: () => {
                 return new Promise<boolean>((resolve) => {
+                    // Reject any outstanding confirmation to avoid a dangling promise
+                    if (this.confirmResolve) {
+                        this.confirmResolve(false)
+                    }
                     this.confirmResolve = resolve
                 })
             },
