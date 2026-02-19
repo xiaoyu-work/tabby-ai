@@ -12,6 +12,8 @@ export const enum EventType {
     ToolCall = 'tool_call',
     /** Token usage data from the API */
     Usage = 'usage',
+    /** Retrying after a transient error — maps to gemini-cli's StreamEventType.RETRY */
+    Retry = 'retry',
     /** API or network error */
     Error = 'error',
     /** Stream finished */

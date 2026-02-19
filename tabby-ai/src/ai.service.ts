@@ -122,13 +122,70 @@ export class AIService {
     }
 
     /**
-     * Streaming chat completion with tool calling support.
+     * Retry configuration — maps to gemini-cli's INVALID_CONTENT_RETRY_OPTIONS
+     * (packages/core/src/core/geminiChat.ts:88-91)
+     */
+    private static readonly RETRY_OPTIONS = {
+        maxAttempts: 3,       // gemini-cli uses 2 for content, 3 for network
+        initialDelayMs: 500,  // gemini-cli: 500ms
+    }
+
+    /**
+     * Network error codes that are safe to retry — maps to gemini-cli's
+     * RETRYABLE_NETWORK_CODES (packages/core/src/utils/retry.ts:50-63)
+     */
+    private static readonly RETRYABLE_NETWORK_CODES = new Set([
+        'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND',
+        'EAI_AGAIN', 'ECONNREFUSED', 'EPROTO',
+        'ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC',
+        'ERR_SSL_WRONG_VERSION_NUMBER',
+        'ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC',
+        'ERR_SSL_BAD_RECORD_MAC',
+    ])
+
+    /**
+     * Determine if an error is retryable — maps to gemini-cli's
+     * isRetryableError() (packages/core/src/utils/retry.ts:112-143)
+     *
+     * Retries on: network error codes, 429 (rate limit), 5xx (server errors).
+     * Does NOT retry: 400 (bad request), 401/403 (auth), 404 (not found).
+     */
+    private isRetryableError (err: any): boolean {
+        // Check network error codes (traverse cause chain like gemini-cli)
+        let current = err
+        for (let depth = 0; depth < 5; depth++) {
+            if (current?.code && AIService.RETRYABLE_NETWORK_CODES.has(current.code)) {
+                return true
+            }
+            if (!current?.cause) break
+            current = current.cause
+        }
+        // Check "fetch failed" message
+        if (err?.message?.toLowerCase().includes('fetch failed')) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Determine if an HTTP status is retryable — 429 or 5xx
+     */
+    private isRetryableStatus (status: number): boolean {
+        return status === 429 || (status >= 500 && status < 600)
+    }
+
+    /**
+     * Streaming chat completion with tool calling and retry support.
      * Returns an AsyncGenerator<StreamEvent>.
      *
-     * Mirrors gemini-cli's GeminiChat.sendMessageStream() → Turn.run()
-     * (packages/core/src/core/geminiChat.ts)
+     * Mirrors gemini-cli's GeminiChat.sendMessageStream() with
+     * streamWithRetries() (packages/core/src/core/geminiChat.ts:340-463)
      *
-     * Uses OpenAI-compatible SSE streaming with tools parameter.
+     * Retry logic:
+     * - Network errors: retry with linear backoff (delayMs * attempt)
+     * - HTTP 429/5xx: retry with linear backoff
+     * - HTTP 400/401/403/404: no retry (permanent errors)
+     * - AbortError: no retry
      */
     async *streamWithTools (
         messages: ChatMessage[],
@@ -141,35 +198,80 @@ export class AIService {
             return
         }
 
-        let response: Response
-        try {
-            response = await fetch(cfg.url, {
-                method: 'POST',
-                headers: cfg.headers,
-                signal,
-                body: JSON.stringify({
-                    model: cfg.model,
-                    messages,
-                    tools,
-                    stream: true,
-                    stream_options: { include_usage: true },
-                    max_tokens: 4096,
-                    temperature: 0.7,
-                }),
-            })
-        } catch (err: any) {
-            yield { type: EventType.Error, value: `Request failed: ${err.message}` }
+        const { maxAttempts, initialDelayMs } = AIService.RETRY_OPTIONS
+        let lastError: string | null = null
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            if (signal?.aborted) break
+
+            // Yield retry event for UI feedback (maps to gemini-cli's StreamEventType.RETRY)
+            if (attempt > 0) {
+                yield { type: EventType.Retry, value: { attempt, maxAttempts } }
+            }
+
+            // === Connection phase (fetch) ===
+            let response: Response
+            try {
+                response = await fetch(cfg.url, {
+                    method: 'POST',
+                    headers: cfg.headers,
+                    signal,
+                    body: JSON.stringify({
+                        model: cfg.model,
+                        messages,
+                        tools,
+                        stream: true,
+                        stream_options: { include_usage: true },
+                        max_tokens: 4096,
+                        temperature: 0.7,
+                    }),
+                })
+            } catch (err: any) {
+                if (err.name === 'AbortError' || signal?.aborted) {
+                    yield { type: EventType.Error, value: 'Request aborted' }
+                    return
+                }
+                // Network error — check if retryable
+                if (this.isRetryableError(err) && attempt < maxAttempts - 1) {
+                    const delayMs = initialDelayMs * (attempt + 1)
+                    await new Promise(res => setTimeout(res, delayMs))
+                    lastError = `Network error: ${err.message}`
+                    continue
+                }
+                yield { type: EventType.Error, value: `Request failed: ${err.message}` }
+                return
+            }
+
+            // HTTP error — check if retryable status
+            if (!response.ok) {
+                const text = await response.text()
+                if (this.isRetryableStatus(response.status) && attempt < maxAttempts - 1) {
+                    const delayMs = initialDelayMs * (attempt + 1)
+                    await new Promise(res => setTimeout(res, delayMs))
+                    lastError = `API error (${response.status}): ${text}`
+                    continue
+                }
+                yield { type: EventType.Error, value: `API error (${response.status}) [${cfg.url}]: ${text}` }
+                return
+            }
+
+            // === Stream phase (SSE parsing) ===
+            yield* this.parseSSEStream(response, signal)
             return
         }
 
-        if (!response.ok) {
-            const text = await response.text()
-            yield { type: EventType.Error, value: `API error (${response.status}) [${cfg.url}]: ${text}` }
-            return
-        }
+        // All retries exhausted
+        yield { type: EventType.Error, value: lastError || 'Request failed after all retries' }
+    }
 
-        // Parse SSE stream
-        // Mirrors gemini-cli's processStreamResponse() in geminiChat.ts
+    /**
+     * Parse an SSE stream response into StreamEvents.
+     * Extracted from streamWithTools for retry clarity.
+     */
+    private async *parseSSEStream (
+        response: Response,
+        signal?: AbortSignal,
+    ): AsyncGenerator<StreamEvent> {
         const reader = response.body!.getReader()
         const decoder = new TextDecoder()
         let sseBuffer = ''
@@ -193,8 +295,6 @@ export class AIService {
                     const data = trimmed.slice(6).trim()
 
                     if (data === '[DONE]') {
-                        // Yield accumulated tool calls (same as gemini-cli collecting
-                        // ToolCallRequestInfo then scheduling after stream ends)
                         for (const tc of pendingToolCalls.values()) {
                             yield { type: EventType.ToolCall, value: tc }
                         }
@@ -209,8 +309,7 @@ export class AIService {
                         continue
                     }
 
-                    // Usage data (sent in a separate chunk with stream_options.include_usage)
-                    // Maps to gemini-cli's chunk.usageMetadata extraction (geminiChat.ts:852)
+                    // Usage data (maps to gemini-cli's chunk.usageMetadata)
                     if (chunk.usage) {
                         const usage: TokensSummary = {
                             promptTokens: chunk.usage.prompt_tokens ?? 0,
@@ -219,6 +318,12 @@ export class AIService {
                             totalTokens: chunk.usage.total_tokens ?? 0,
                         }
                         yield { type: EventType.Usage, value: usage }
+                    }
+
+                    // API-level error in chunk (non-SSE error response)
+                    if (chunk.error) {
+                        yield { type: EventType.Error, value: `API error: ${chunk.error.message || JSON.stringify(chunk.error)}` }
+                        return
                     }
 
                     const choice = chunk.choices?.[0]
@@ -232,7 +337,6 @@ export class AIService {
                     }
 
                     // Tool call fragments — accumulate and splice
-                    // OpenAI streams tool_calls in fragments across multiple chunks
                     if (delta.tool_calls) {
                         for (const tc of delta.tool_calls) {
                             const idx = tc.index ?? 0
@@ -260,7 +364,7 @@ export class AIService {
             reader.releaseLock()
         }
 
-        // If stream ended without [DONE], still yield accumulated tool calls
+        // Stream ended without [DONE] — still yield accumulated tool calls
         for (const tc of pendingToolCalls.values()) {
             yield { type: EventType.ToolCall, value: tc }
         }
