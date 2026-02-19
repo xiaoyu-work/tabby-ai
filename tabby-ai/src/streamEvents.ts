@@ -10,6 +10,8 @@ export const enum EventType {
     Thought = 'thought',
     /** AI requests tool execution */
     ToolCall = 'tool_call',
+    /** Token usage data from the API */
+    Usage = 'usage',
     /** API or network error */
     Error = 'error',
     /** Stream finished */
@@ -27,4 +29,15 @@ export interface ToolCallRequest {
         name: string
         arguments: string
     }
+}
+
+/**
+ * Token usage summary — maps to gemini-cli's TokensSummary
+ * (packages/core/src/services/chatRecordingService.ts)
+ */
+export interface TokensSummary {
+    promptTokens: number       // prompt_tokens / promptTokenCount
+    completionTokens: number   // completion_tokens / candidatesTokenCount
+    cachedTokens: number       // prompt_tokens_details.cached_tokens / cachedContentTokenCount
+    totalTokens: number        // total_tokens / totalTokenCount
 }

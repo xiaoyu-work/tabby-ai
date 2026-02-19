@@ -10,7 +10,7 @@
 
 import { AIService, ChatMessage, ToolDefinition } from './ai.service'
 import { ContextCollector } from './contextCollector'
-import { EventType, ToolCallRequest } from './streamEvents'
+import { EventType, ToolCallRequest, TokensSummary } from './streamEvents'
 import { executeCommand, ShellResult } from './shellExecutor'
 import * as fs from 'fs/promises'
 import * as path from 'path'
@@ -65,9 +65,17 @@ export interface AgentCallbacks {
     onError: (err: string) => void
 }
 
+/** Result from AgentLoop.run() */
+export interface AgentResult {
+    messages: ChatMessage[]
+    usage: TokensSummary
+}
+
 export class AgentLoop {
     private messages: ChatMessage[] = []
     private maxTurns = 20
+    /** Accumulated token usage across all turns — maps to gemini-cli's ModelMetrics.tokens */
+    private usage: TokensSummary = { promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0 }
 
     constructor (
         private ai: AIService,
@@ -79,14 +87,14 @@ export class AgentLoop {
     /**
      * Main loop — mirrors gemini-cli's submitQuery → processGeminiStreamEvents
      * → scheduleToolCalls → handleCompletedTools → submitQuery(continuation)
+     *
+     * Accepts pre-built messages (system + history + user query).
+     * Returns only the messages produced during this run (assistant + tool results)
+     * so the caller can append them to persistent conversation history.
      */
-    async run (userQuery: string): Promise<void> {
-        const context = this.collector.toPromptString()
-
-        this.messages = [
-            { role: 'system', content: this.buildSystemPrompt(context) },
-            { role: 'user', content: userQuery },
-        ]
+    async run (messages: ChatMessage[]): Promise<AgentResult> {
+        this.messages = messages
+        const startIndex = messages.length
 
         try {
             for (let turn = 0; turn < this.maxTurns; turn++) {
@@ -124,9 +132,20 @@ export class AgentLoop {
                             toolCallRequests.push(event.value as ToolCallRequest)
                             break
 
+                        case EventType.Usage: {
+                            // Accumulate token usage — maps to gemini-cli's
+                            // uiTelemetry.ts:processApiResponse() accumulation
+                            const u = event.value as TokensSummary
+                            this.usage.promptTokens += u.promptTokens
+                            this.usage.completionTokens += u.completionTokens
+                            this.usage.cachedTokens += u.cachedTokens
+                            this.usage.totalTokens += u.totalTokens
+                            break
+                        }
+
                         case EventType.Error:
                             this.callbacks.onError(event.value)
-                            return
+                            return { messages: this.messages.slice(startIndex), usage: this.usage }
 
                         case EventType.Finished:
                             break
@@ -170,11 +189,12 @@ export class AgentLoop {
                 this.callbacks.onContent('\r\n(aborted)\r\n')
             } else {
                 this.callbacks.onError(err.message)
-                return
+                return { messages: this.messages.slice(startIndex), usage: this.usage }
             }
         }
 
         this.callbacks.onDone()
+        return { messages: this.messages.slice(startIndex), usage: this.usage }
     }
 
     private async executeTool (call: ToolCallRequest): Promise<string> {
@@ -293,19 +313,4 @@ export class AgentLoop {
         }
     }
 
-    private buildSystemPrompt (context: string): string {
-        return [
-            'You are an AI assistant embedded in the Tabby terminal.',
-            'You can run shell commands and read files to help the user complete tasks.',
-            '',
-            'Guidelines:',
-            '- When you need to investigate or take action, USE the tools instead of just suggesting commands.',
-            '- Explain what you are about to do before using a tool.',
-            '- After getting tool results, analyze them and decide if more actions are needed.',
-            '- Be concise in explanations.',
-            '- If a command fails, try to diagnose and fix the issue.',
-            '',
-            context,
-        ].join('\n')
-    }
 }

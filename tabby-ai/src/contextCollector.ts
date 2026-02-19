@@ -12,6 +12,7 @@ export class ContextCollector {
     private buffer: string[] = []
     private _cwd = ''
     private readonly maxLines: number
+    private totalLinesPushed = 0
 
     constructor (maxLines = 100) {
         this.maxLines = maxLines
@@ -23,9 +24,27 @@ export class ContextCollector {
     pushOutput (data: Buffer): void {
         const clean = data.toString('utf-8').replace(ANSI_REGEX, '')
         const lines = clean.split(/\r?\n/)
+        this.totalLinesPushed += lines.length
         this.buffer.push(...lines)
         if (this.buffer.length > this.maxLines) {
             this.buffer = this.buffer.slice(-this.maxLines)
+        }
+    }
+
+    /**
+     * Get terminal output added since the given checkpoint.
+     * Returns the text and a new checkpoint value.
+     */
+    getOutputSince (checkpoint: number): { text: string; checkpoint: number } {
+        const newLines = this.totalLinesPushed - checkpoint
+        if (newLines <= 0) {
+            return { text: '', checkpoint: this.totalLinesPushed }
+        }
+        const available = Math.min(newLines, this.buffer.length)
+        const lines = this.buffer.slice(-available)
+        return {
+            text: lines.join('\n'),
+            checkpoint: this.totalLinesPushed,
         }
     }
 

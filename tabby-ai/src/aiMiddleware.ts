@@ -9,9 +9,10 @@
 
 import colors from 'ansi-colors'
 import { SessionMiddleware } from 'tabby-terminal'
-import { AIService } from './ai.service'
+import { AIService, ChatMessage } from './ai.service'
 import { ContextCollector } from './contextCollector'
 import { AgentLoop } from './agentLoop'
+import { TokensSummary } from './streamEvents'
 
 const enum State {
     /** Normal mode — all input goes to shell */
@@ -35,6 +36,10 @@ export class AIMiddleware extends SessionMiddleware {
     private abortController: AbortController | null = null
     private confirmResolve: ((approved: boolean) => void) | null = null
     private bannerShown = false
+    private conversationHistory: ChatMessage[] = []
+    private terminalCheckpoint = 0
+    /** Session-level accumulated token usage — maps to gemini-cli's ModelMetrics.tokens */
+    private sessionUsage: TokensSummary = { promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0 }
 
     constructor (
         private ai: AIService,
@@ -171,6 +176,30 @@ export class AIMiddleware extends SessionMiddleware {
         this.state = State.AGENT_STREAMING
         this.abortController = new AbortController()
 
+        // Build user message with terminal activity since last turn
+        const { text: terminalActivity, checkpoint } = this.collector.getOutputSince(this.terminalCheckpoint)
+        this.terminalCheckpoint = checkpoint
+
+        let userContent = query
+        if (terminalActivity.trim()) {
+            userContent = `[Terminal activity since last conversation]\n${terminalActivity.trim()}\n\n${query}`
+        }
+
+        // Build messages: fresh system prompt + conversation history + new user message
+        const messages: ChatMessage[] = [
+            { role: 'system', content: this.buildSystemPrompt() },
+            ...this.conversationHistory,
+            { role: 'user', content: userContent },
+        ]
+
+        // Trim if conversation is too long: keep system + last 40 messages
+        if (messages.length > 50) {
+            const system = messages.shift()!
+            const recent = messages.slice(-40)
+            messages.length = 0
+            messages.push(system, ...recent)
+        }
+
         const loop = new AgentLoop(this.ai, this.collector, {
             onContent: (text) => {
                 this.state = State.AGENT_STREAMING
@@ -194,7 +223,6 @@ export class AIMiddleware extends SessionMiddleware {
 
             waitForApproval: () => {
                 return new Promise<boolean>((resolve) => {
-                    // Reject any outstanding confirmation to avoid a dangling promise
                     if (this.confirmResolve) {
                         this.confirmResolve(false)
                     }
@@ -222,7 +250,6 @@ export class AIMiddleware extends SessionMiddleware {
                 this.state = State.NORMAL
                 this.atLineStart = true
                 this.abortController = null
-                // Trigger shell to show new prompt
                 this.outputToSession.next(Buffer.from('\r'))
             },
 
@@ -237,6 +264,75 @@ export class AIMiddleware extends SessionMiddleware {
             },
         }, this.abortController.signal)
 
-        await loop.run(query)
+        const result = await loop.run(messages)
+
+        // Update persistent conversation history
+        this.conversationHistory.push({ role: 'user', content: userContent })
+        this.conversationHistory.push(...result.messages)
+
+        // Trim history to prevent unbounded growth
+        if (this.conversationHistory.length > 40) {
+            this.conversationHistory = this.conversationHistory.slice(-40)
+        }
+
+        // Display token usage — maps to gemini-cli's StatsDisplay.tsx
+        this.displayUsage(result.usage)
+    }
+
+    /**
+     * Display token usage summary — simplified ANSI version of
+     * gemini-cli's StatsDisplay.tsx ModelUsageTable
+     */
+    private displayUsage (usage: TokensSummary): void {
+        if (usage.totalTokens <= 0) return
+
+        // Accumulate session totals (maps to gemini-cli's processApiResponse accumulation)
+        this.sessionUsage.promptTokens += usage.promptTokens
+        this.sessionUsage.completionTokens += usage.completionTokens
+        this.sessionUsage.cachedTokens += usage.cachedTokens
+        this.sessionUsage.totalTokens += usage.totalTokens
+
+        // Format: "Tokens: 1,234 input / 567 output / 1,801 total"
+        const parts: string[] = []
+
+        if (usage.cachedTokens > 0) {
+            const uncached = Math.max(0, usage.promptTokens - usage.cachedTokens)
+            parts.push(`${uncached.toLocaleString()} input (${usage.cachedTokens.toLocaleString()} cached)`)
+        } else {
+            parts.push(`${usage.promptTokens.toLocaleString()} input`)
+        }
+
+        parts.push(`${usage.completionTokens.toLocaleString()} output`)
+        parts.push(`${usage.totalTokens.toLocaleString()} total`)
+
+        let line = `  Tokens: ${parts.join(' / ')}`
+
+        // Show session totals if this is not the first invocation
+        if (this.sessionUsage.totalTokens > usage.totalTokens) {
+            line += colors.gray(`  (session: ${this.sessionUsage.totalTokens.toLocaleString()} total)`)
+        }
+
+        this.outputToTerminal.next(Buffer.from(
+            colors.gray(line) + '\r\n',
+        ))
+    }
+
+    private buildSystemPrompt (): string {
+        const context = this.collector.toPromptString()
+        return [
+            'You are an AI assistant embedded in the Tabby terminal.',
+            'You can run shell commands and read files to help the user complete tasks.',
+            'You have persistent memory within this terminal session — you can reference previous conversations.',
+            '',
+            'Guidelines:',
+            '- When you need to investigate or take action, USE the tools instead of just suggesting commands.',
+            '- Explain what you are about to do before using a tool.',
+            '- After getting tool results, analyze them and decide if more actions are needed.',
+            '- Be concise in explanations.',
+            '- If a command fails, try to diagnose and fix the issue.',
+            '- Terminal activity between conversations shows what the user did — use it as context.',
+            '',
+            context,
+        ].join('\n')
     }
 }

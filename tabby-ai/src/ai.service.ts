@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core'
 import { ConfigService } from 'tabby-core'
-import { EventType, StreamEvent, ToolCallRequest } from './streamEvents'
+import { EventType, StreamEvent, ToolCallRequest, TokensSummary } from './streamEvents'
 import { PROVIDER_PRESETS } from './providers'
 
 /**
@@ -152,6 +152,7 @@ export class AIService {
                     messages,
                     tools,
                     stream: true,
+                    stream_options: { include_usage: true },
                     max_tokens: 4096,
                     temperature: 0.7,
                 }),
@@ -206,6 +207,18 @@ export class AIService {
                         chunk = JSON.parse(data)
                     } catch {
                         continue
+                    }
+
+                    // Usage data (sent in a separate chunk with stream_options.include_usage)
+                    // Maps to gemini-cli's chunk.usageMetadata extraction (geminiChat.ts:852)
+                    if (chunk.usage) {
+                        const usage: TokensSummary = {
+                            promptTokens: chunk.usage.prompt_tokens ?? 0,
+                            completionTokens: chunk.usage.completion_tokens ?? 0,
+                            cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+                            totalTokens: chunk.usage.total_tokens ?? 0,
+                        }
+                        yield { type: EventType.Usage, value: usage }
                     }
 
                     const choice = chunk.choices?.[0]
